@@ -10,6 +10,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.view.ViewGroup
 import androidx.webkit.WebViewAssetLoader
 
 class RustWebViewClient(webView: RustWebView, context: Context): WebViewClient() {
@@ -92,6 +93,14 @@ class RustWebViewClient(webView: RustWebView, context: Context): WebViewClient()
         } else {
             super.onReceivedError(view, request, error)
         }
+    }
+
+    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+        val webView = view as RustWebView
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.destroy()
+        Rust.onRenderProcessGone(webView.id, detail.didCrash())
+        return true
     }
 
     {{class-extension}}

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-use super::{PageLoadEvent, WebViewAttributes, RGBA};
+use super::{PageLoadEvent, RenderProcessGone, WebViewAttributes, RGBA};
 use crate::{
   custom_protocol_workaround, inject_initialization_scripts::inject_scripts_into_html, Error,
   RequestAsyncResponder, Result,
@@ -28,8 +28,8 @@ use std::{
 pub(crate) mod binding;
 mod main_pipe;
 use main_pipe::{
-  activity_id_for_window_manager, first_activity_id, register_activity_proxy, ActivityId,
-  CreateWebViewAttributes, MainPipe, WebViewMessage,
+  activity_id_for_window_manager, first_activity_id, forget_webview, register_activity_proxy,
+  ActivityId, CreateWebViewAttributes, MainPipe, WebViewMessage,
 };
 
 use crate::util::Counter;
@@ -74,6 +74,7 @@ define_static_handlers! {
   TITLE_CHANGE_HANDLER = UnsafeTitleHandler { handler: Box<dyn Fn(String)> };
   URL_LOADING_OVERRIDE = UnsafeUrlLoadingOverride { handler: Box<dyn Fn(String) -> bool> };
   ON_LOAD_HANDLER = UnsafeOnPageLoadHandler { handler: Box<dyn Fn(PageLoadEvent, String)> };
+  RENDER_PROCESS_GONE_HANDLER = UnsafeRenderProcessGoneHandler { handler: Box<dyn Fn(RenderProcessGone)> };
 }
 define_static_handlers! {
   WebviewId, WITH_ASSET_LOADER = bool;
@@ -95,8 +96,35 @@ pub fn destroy_webview(activity_id: ActivityId, webview_id: &WebviewId) {
   TITLE_CHANGE_HANDLER.lock().unwrap().remove(webview_id);
   URL_LOADING_OVERRIDE.lock().unwrap().remove(webview_id);
   ON_LOAD_HANDLER.lock().unwrap().remove(webview_id);
+  RENDER_PROCESS_GONE_HANDLER
+    .lock()
+    .unwrap()
+    .remove(webview_id);
   WITH_ASSET_LOADER.lock().unwrap().remove(webview_id);
   ASSET_LOADER_DOMAIN.lock().unwrap().remove(webview_id);
+}
+
+pub(crate) fn render_process_gone(webview_id: &str, gone: RenderProcessGone) {
+  let gone_view = WEBVIEW_ATTRIBUTES
+    .lock()
+    .unwrap()
+    .iter()
+    .find(|(_, attributes)| attributes.id == webview_id)
+    .map(|(activity_id, attributes)| (*activity_id, attributes.clone()));
+  if let Some((activity_id, attributes)) = gone_view {
+    forget_webview(activity_id);
+    MainPipe::send(
+      activity_id,
+      WebViewMessage::CreateWebView(CreateWebViewAttributes {
+        url: None,
+        html: None,
+        ..attributes
+      }),
+    );
+  }
+  if let Some(handler) = RENDER_PROCESS_GONE_HANDLER.lock().unwrap().get(webview_id) {
+    (handler.handler)(gone);
+  }
 }
 
 /// Sets up the necessary logic for wry to be able to create the webviews later.
@@ -209,6 +237,7 @@ impl InnerWebView {
       with_asset_loader,
       asset_loader_domain,
       https_scheme,
+      on_render_process_gone,
     } = pl_attrs;
 
     let http_or_https = if https_scheme { "https" } else { "http" };
@@ -313,6 +342,13 @@ impl InnerWebView {
         .lock()
         .unwrap()
         .insert(id.clone(), UnsafeOnPageLoadHandler::new(h));
+    }
+
+    if let Some(h) = on_render_process_gone {
+      RENDER_PROCESS_GONE_HANDLER
+        .lock()
+        .unwrap()
+        .insert(id.clone(), UnsafeRenderProcessGoneHandler::new(h));
     }
 
     let attributes = CreateWebViewAttributes {

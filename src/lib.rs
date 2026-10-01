@@ -1840,6 +1840,18 @@ pub(crate) struct PlatformSpecificWebViewAttributes {
   with_asset_loader: bool,
   asset_loader_domain: Option<String>,
   https_scheme: bool,
+  on_render_process_gone: Option<Box<dyn Fn(RenderProcessGone)>>,
+}
+
+/// How a web view's renderer process went, as Android reports it to
+/// [`WebViewBuilderExtAndroid::with_on_render_process_gone_handler`].
+#[cfg(target_os = "android")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderProcessGone {
+  /// The renderer process crashed.
+  Crashed,
+  /// The system ended the renderer process, most often to reclaim its memory.
+  Killed,
 }
 
 #[cfg(target_os = "android")]
@@ -1870,6 +1882,19 @@ pub trait WebViewBuilderExtAndroid {
   ///
   /// The default value is `false`.
   fn with_https_scheme(self, enabled: bool) -> Self;
+
+  /// Set a handler closure to respond to the web view's renderer process going, by a crash or because the system
+  /// ended it. Without it, Android ends the whole application with the renderer.
+  ///
+  /// The web view whose renderer went is destroyed, as Android requires, and replaced by a blank one made with the
+  /// same attributes and the same id, so every handler registered for it serves the replacement. Nothing is loaded
+  /// into the replacement: the handler is where the application asks for the page it wants again.
+  ///
+  /// See https://developer.android.com/reference/android/webkit/WebViewClient#onRenderProcessGone(android.webkit.WebView,%20android.webkit.RenderProcessGoneDetail)
+  fn with_on_render_process_gone_handler(
+    self,
+    handler: impl Fn(RenderProcessGone) + 'static,
+  ) -> Self;
 }
 
 #[cfg(target_os = "android")]
@@ -1905,6 +1930,14 @@ impl WebViewBuilderExtAndroid for WebViewBuilder<'_> {
 
   fn with_https_scheme(mut self, enabled: bool) -> Self {
     self.platform_specific.https_scheme = enabled;
+    self
+  }
+
+  fn with_on_render_process_gone_handler(
+    mut self,
+    handler: impl Fn(RenderProcessGone) + 'static,
+  ) -> Self {
+    self.platform_specific.on_render_process_gone = Some(Box::new(handler));
     self
   }
 }

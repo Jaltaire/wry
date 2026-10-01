@@ -66,6 +66,12 @@ pub fn activity_proxy(id: ActivityId) -> Option<ActivityProxy> {
   ACTIVITY_PROXY.lock().unwrap().get(&id).cloned()
 }
 
+pub(crate) fn forget_webview(id: ActivityId) {
+  if let Some(proxy) = ACTIVITY_PROXY.lock().unwrap().get_mut(&id) {
+    proxy.webview = None;
+  }
+}
+
 fn remove_activity_proxy(id: ActivityId) {
   ACTIVITY_PROXY.lock().unwrap().remove(&id);
 }
