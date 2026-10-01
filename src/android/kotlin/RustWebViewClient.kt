@@ -10,6 +10,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.view.ViewGroup
 import androidx.webkit.WebViewAssetLoader
 import java.io.InputStream
 
@@ -139,6 +140,14 @@ class RustWebViewClient(webView: RustWebView, context: Context): WebViewClient()
             return null
         }
         return contentRange.substringAfter("bytes ").substringBefore('-').toLongOrNull()
+    }
+
+    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+        val webView = view as RustWebView
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.destroy()
+        Rust.onRenderProcessGone(webView.id, detail.didCrash())
+        return true
     }
 
     {{class-extension}}

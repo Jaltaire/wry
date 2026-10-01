@@ -30,6 +30,7 @@ object Rust {
 
     @JvmStatic external fun onFirstActivityCreateWry()
     @JvmStatic external fun onWebviewDestroy(activity: WryActivity, webviewId: String)
+    @JvmStatic external fun onRenderProcessGone(webviewId: String, didCrash: Boolean)
 
     @JvmStatic external fun ipc(webviewId: String, url: String, message: String)
 

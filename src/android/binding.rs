@@ -22,7 +22,7 @@ use super::{
   main_pipe::{MAIN_PIPE, MainPipe},
 };
 
-use crate::{PageLoadEvent, PermissionKind, PermissionResponse};
+use crate::{PageLoadEvent, PermissionKind, PermissionResponse, RenderProcessGone};
 
 #[macro_export]
 macro_rules! android_binding {
@@ -41,6 +41,13 @@ macro_rules! android_binding {
       Rust,
       onWebviewDestroy,
       [JObject, JString]
+    );
+    android_fn!(
+      $domain,
+      $package,
+      Rust,
+      onRenderProcessGone,
+      [JString, jboolean]
     );
 
     android_fn!(
@@ -316,6 +323,29 @@ pub unsafe fn onWebviewDestroy(mut env: JNIEnv, _: JClass, activity: JObject, we
       is_changing_configurations,
     },
   );
+}
+
+#[allow(non_snake_case)]
+pub unsafe fn onRenderProcessGone(
+  mut env: JNIEnv,
+  _: JClass,
+  webview_id: JString,
+  did_crash: jboolean,
+) {
+  match env.get_string(&webview_id) {
+    Ok(webview_id) => {
+      let gone = if did_crash == 0 {
+        RenderProcessGone::Killed
+      } else {
+        RenderProcessGone::Crashed
+      };
+      super::render_process_gone(&webview_id.to_string_lossy(), gone);
+    }
+    Err(_e) => {
+      #[cfg(feature = "tracing")]
+      tracing::warn!("Failed to parse JString: {_e}")
+    }
+  }
 }
 
 #[allow(non_snake_case)]
