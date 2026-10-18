@@ -66,6 +66,12 @@ define_class!(
     }
 
     #[cfg(target_os = "ios")]
+    #[unsafe(method(setBounds:))]
+    fn set_bounds(&self, bounds: objc2_core_foundation::CGRect) {
+      crate::wkwebview::presentation::set_bounds(self, bounds);
+    }
+
+    #[cfg(target_os = "ios")]
     #[unsafe(method(layoutSubviews))]
     fn layout_subviews(&self) {
       unsafe { objc2::msg_send![super(self), layoutSubviews] }
