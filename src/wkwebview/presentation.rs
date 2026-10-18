@@ -26,6 +26,27 @@ impl SizeChange {
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FrameRound {
+  Painted,
+  Repaint,
+  OutOfRounds,
+}
+
+impl FrameRound {
+  pub(crate) const LIMIT: u32 = 3;
+
+  pub(crate) fn after(before: CGSize, after: CGSize, rounds: u32) -> Self {
+    if before.width == after.width && before.height == after.height {
+      Self::Painted
+    } else if rounds < Self::LIMIT {
+      Self::Repaint
+    } else {
+      Self::OutOfRounds
+    }
+  }
+}
+
 pub(crate) fn cover_scale(from: CGSize, to: CGSize) -> Option<f64> {
   if from.width <= 0.0 || from.height <= 0.0 || to.width <= 0.0 || to.height <= 0.0 {
     return None;
@@ -46,12 +67,13 @@ mod ios {
   use std::{cell::Cell, panic::AssertUnwindSafe, rc::Rc, time::Duration};
 
   use block2::RcBlock;
+  use objc2::rc::Retained;
   use objc2::{class, msg_send, sel, ClassType, DeclaredClass, MainThreadMarker};
   use objc2_core_foundation::{CFRunLoop, CFString, CGAffineTransform, CGRect};
   use objc2_foundation::{NSDate, NSObjectProtocol, NSRunLoop, NSString};
-  use objc2_ui_kit::UIView;
+  use objc2_ui_kit::{UIScrollView, UIView};
 
-  use super::SizeChange;
+  use super::{FrameRound, SizeChange};
   use crate::wkwebview::{ios::WKWebView::WKWebView, WryWebView};
 
   pub(crate) const FRAME_PATIENCE: Duration = Duration::from_millis(500);
@@ -128,16 +150,13 @@ mod ios {
 
   fn wait_for_next_frame(webview: &WryWebView, mtm: MainThreadMarker) {
     let drawn = Rc::new(Cell::new(false));
-    let told = drawn.clone();
-    let block = RcBlock::new(move || told.set(true));
     let mode = NSString::from_str(MODE);
-    if webview.respondsToSelector(sel!(_updateVisibleContentRects)) {
-      let _ = objc2::exception::catch(AssertUnwindSafe(|| unsafe {
-        let _: () = msg_send![webview, _updateVisibleContentRects];
-      }));
-    }
+    let content_size = || unsafe {
+      let scroll: Retained<UIScrollView> = msg_send![webview, scrollView];
+      scroll.contentSize()
+    };
+    let mut painted = false;
     unsafe {
-      let _: () = msg_send![webview, _doAfterNextPresentationUpdate: &*block];
       CFRunLoop::main()
         .expect("The main thread has a run loop.")
         .add_common_mode(Some(&CFString::from_str(MODE)));
@@ -146,18 +165,43 @@ mod ios {
       let _: () = msg_send![class!(CATransaction), begin];
       let deadline = NSDate::dateWithTimeIntervalSinceNow(FRAME_PATIENCE.as_secs_f64());
       let run_loop = NSRunLoop::mainRunLoop();
-      while !drawn.get() && deadline.timeIntervalSinceNow() > 0.0 {
-        run_loop.runMode_beforeDate(&mode, &deadline);
+      for round in 1..=FrameRound::LIMIT {
+        let before = content_size();
+        if webview.respondsToSelector(sel!(_updateVisibleContentRects)) {
+          let _ = objc2::exception::catch(AssertUnwindSafe(|| {
+            let _: () = msg_send![webview, _updateVisibleContentRects];
+          }));
+        }
+        drawn.set(false);
+        let told = drawn.clone();
+        let block = RcBlock::new(move || told.set(true));
+        let _: () = msg_send![webview, _doAfterNextPresentationUpdate: &*block];
+        while !drawn.get() && deadline.timeIntervalSinceNow() > 0.0 {
+          run_loop.runMode_beforeDate(&mode, &deadline);
+        }
+        if !drawn.get() {
+          break;
+        }
+        match FrameRound::after(before, content_size(), round) {
+          FrameRound::Painted => {
+            painted = true;
+            break;
+          }
+          FrameRound::Repaint => {}
+          FrameRound::OutOfRounds => break,
+        }
       }
       let _: () = msg_send![class!(CATransaction), commit];
       UIView::setAnimationsEnabled(animated, mtm);
     }
     #[cfg(feature = "tracing")]
-    if !drawn.get() {
+    if !painted {
       tracing::warn!(
-        "The web view's frame at its new size was not drawn within {FRAME_PATIENCE:?}, so the resize is shown before it."
+        "The web view's frame at its new size was not fully drawn within {FRAME_PATIENCE:?}, so the resize is shown before it."
       );
     }
+    #[cfg(not(feature = "tracing"))]
+    let _ = painted;
   }
 }
 
@@ -314,6 +358,50 @@ mod tests {
     assert_eq!(
       turning_scale(size(0.0, 0.0), size(420.0, 912.0), true),
       None
+    );
+  }
+
+  #[test]
+  fn a_frame_whose_content_kept_its_size_is_painted() {
+    for rounds in 1..=FrameRound::LIMIT {
+      assert_eq!(
+        FrameRound::after(size(912.0, 420.0), size(912.0, 420.0), rounds),
+        FrameRound::Painted,
+        "{rounds}"
+      );
+    }
+  }
+
+  #[test]
+  fn a_frame_whose_content_changed_size_is_painted_again() {
+    for rounds in 1..FrameRound::LIMIT {
+      for (before, after) in [
+        (size(420.0, 912.0), size(912.0, 420.0)),
+        (size(912.0, 420.0), size(420.0, 912.0)),
+        (size(420.0, 912.0), size(420.0, 1400.0)),
+      ] {
+        assert_eq!(
+          FrameRound::after(before, after, rounds),
+          FrameRound::Repaint,
+          "{before:?} to {after:?} in round {rounds}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn a_frame_still_changing_size_after_the_last_round_is_given_up() {
+    assert_eq!(
+      FrameRound::after(size(420.0, 912.0), size(912.0, 420.0), FrameRound::LIMIT),
+      FrameRound::OutOfRounds
+    );
+    assert_eq!(
+      FrameRound::after(
+        size(420.0, 912.0),
+        size(912.0, 420.0),
+        FrameRound::LIMIT + 1
+      ),
+      FrameRound::OutOfRounds
     );
   }
 
