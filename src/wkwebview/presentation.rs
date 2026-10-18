@@ -39,20 +39,20 @@ pub(crate) fn turning_scale(from: CGSize, to: CGSize, animated: bool) -> Option<
 }
 
 #[cfg(target_os = "ios")]
-pub(crate) use ios::follow_size;
+pub(crate) use ios::{follow_size, set_bounds};
 
 #[cfg(target_os = "ios")]
 mod ios {
   use std::{cell::Cell, panic::AssertUnwindSafe, rc::Rc, time::Duration};
 
   use block2::RcBlock;
-  use objc2::{class, msg_send, sel, DeclaredClass, MainThreadMarker};
-  use objc2_core_foundation::{CFRunLoop, CFString, CGAffineTransform};
+  use objc2::{class, msg_send, sel, ClassType, DeclaredClass, MainThreadMarker};
+  use objc2_core_foundation::{CFRunLoop, CFString, CGAffineTransform, CGRect};
   use objc2_foundation::{NSDate, NSObjectProtocol, NSRunLoop, NSString};
   use objc2_ui_kit::UIView;
 
   use super::SizeChange;
-  use crate::wkwebview::WryWebView;
+  use crate::wkwebview::{ios::WKWebView::WKWebView, WryWebView};
 
   pub(crate) const FRAME_PATIENCE: Duration = Duration::from_millis(500);
 
@@ -73,30 +73,46 @@ mod ios {
     let Some(mtm) = MainThreadMarker::new() else {
       return;
     };
-    let animated = unsafe { UIView::inheritedAnimationDuration(mtm) } > 0.0;
-    if let Some(scale) = super::turning_scale(drawn, now, animated) {
-      cover(webview, scale, mtm);
-    }
     ivars.waiting_for_frame.set(true);
     wait_for_next_frame(webview, mtm);
     ivars.waiting_for_frame.set(false);
   }
 
-  fn cover(webview: &WryWebView, scale: f64, mtm: MainThreadMarker) {
-    let scaled = |scale: f64| CGAffineTransform {
-      a: scale,
-      b: 0.0,
-      c: 0.0,
-      d: scale,
-      tx: 0.0,
-      ty: 0.0,
+  pub(crate) fn set_bounds(webview: &WryWebView, bounds: CGRect) {
+    let set = |bounds: CGRect| unsafe {
+      let _: () = msg_send![super(webview, WKWebView::class()), setBounds: bounds];
+    };
+    let Some(mtm) = MainThreadMarker::new() else {
+      set(bounds);
+      return;
+    };
+    let animated = unsafe { UIView::inheritedAnimationDuration(mtm) } > 0.0;
+    let scale = super::turning_scale(webview.bounds().size, bounds.size, animated)
+      .filter(|_| showing(webview));
+    let Some(scale) = scale else {
+      set(bounds);
+      return;
     };
     unsafe {
-      let animated = UIView::areAnimationsEnabled(mtm);
+      let enabled = UIView::areAnimationsEnabled(mtm);
       UIView::setAnimationsEnabled(false, mtm);
-      webview.setTransform(scaled(scale));
-      UIView::setAnimationsEnabled(animated, mtm);
-      webview.setTransform(scaled(1.0));
+      set(bounds);
+      cover(webview, scale);
+      UIView::setAnimationsEnabled(enabled, mtm);
+      cover(webview, 1.0);
+    }
+  }
+
+  fn cover(webview: &WryWebView, scale: f64) {
+    unsafe {
+      webview.setTransform(CGAffineTransform {
+        a: scale,
+        b: 0.0,
+        c: 0.0,
+        d: scale,
+        tx: 0.0,
+        ty: 0.0,
+      });
     }
   }
 
@@ -233,6 +249,27 @@ mod tests {
         to.width * shown >= width - 1e-9 && to.height * shown >= height - 1e-9,
         "{progress}"
       );
+    }
+  }
+
+  #[test]
+  fn no_smaller_scale_covers_the_box_at_any_step_of_the_turn() {
+    for (from, to) in [
+      (size(912.0, 420.0), size(420.0, 912.0)),
+      (size(420.0, 912.0), size(912.0, 420.0)),
+    ] {
+      let scale = cover_scale(from, to).expect("It is scaled.");
+      for step in 0..=100 {
+        let progress = f64::from(step) / 100.0;
+        let width = from.width + (to.width - from.width) * progress;
+        let height = from.height + (to.height - from.height) * progress;
+        let needed = (width / to.width).max(height / to.height);
+        let shown = scale + (1.0 - scale) * progress;
+        assert!(
+          (shown - needed).abs() < 1e-9,
+          "{from:?} to {to:?} at {progress}"
+        );
+      }
     }
   }
 
