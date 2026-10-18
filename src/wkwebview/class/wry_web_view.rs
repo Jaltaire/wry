@@ -31,6 +31,10 @@ pub struct WryWebViewIvars {
   pub(crate) accept_first_mouse: objc2::runtime::Bool,
   #[cfg(target_os = "ios")]
   pub(crate) input_accessory_view_builder: Option<Box<crate::InputAccessoryViewBuilder>>,
+  #[cfg(target_os = "ios")]
+  pub(crate) drawn_size: std::cell::Cell<objc2_core_foundation::CGSize>,
+  #[cfg(target_os = "ios")]
+  pub(crate) waiting_for_frame: std::cell::Cell<bool>,
   pub(crate) custom_protocol_task_ids: Mutex<HashMap<usize, Retained<NSUUID>>>,
 }
 
@@ -59,6 +63,13 @@ define_class!(
     #[unsafe(method(acceptsFirstMouse:))]
     fn accept_first_mouse(&self, _event: &NSEvent) -> Bool {
       self.ivars().accept_first_mouse
+    }
+
+    #[cfg(target_os = "ios")]
+    #[unsafe(method(layoutSubviews))]
+    fn layout_subviews(&self) {
+      unsafe { objc2::msg_send![super(self), layoutSubviews] }
+      crate::wkwebview::presentation::follow_size(self);
     }
 
     #[cfg(target_os = "ios")]
