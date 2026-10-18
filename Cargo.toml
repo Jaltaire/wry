@@ -135,6 +135,8 @@ objc2-web-kit = { version = "0.3.0", default-features = false, features = [
 objc2-core-foundation = { version = "0.3.0", default-features = false, features = [
   "std",
   "CFCGTypes",
+  "CFRunLoop",
+  "CFString",
 ] }
 objc2-foundation = { version = "0.3.0", default-features = false, features = [
   "std",
@@ -157,6 +159,7 @@ objc2-foundation = { version = "0.3.0", default-features = false, features = [
   "NSValue",
   "NSRange",
   "NSRunLoop",
+  "NSObjCRuntime",
 ] }
 
 [target.'cfg(target_os = "ios")'.dependencies]

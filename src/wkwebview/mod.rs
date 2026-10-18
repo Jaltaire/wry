@@ -6,6 +6,8 @@ mod download;
 #[cfg(target_os = "macos")]
 mod drag_drop;
 mod navigation;
+#[cfg(any(target_os = "ios", test))]
+mod presentation;
 #[cfg(feature = "mac-proxy")]
 mod proxy;
 #[cfg(target_os = "macos")]
@@ -309,6 +311,10 @@ impl InnerWebView {
         accept_first_mouse: Bool::new(attributes.accept_first_mouse),
         #[cfg(target_os = "ios")]
         input_accessory_view_builder: pl_attrs.input_accessory_view_builder,
+        #[cfg(target_os = "ios")]
+        drawn_size: Default::default(),
+        #[cfg(target_os = "ios")]
+        waiting_for_frame: Default::default(),
         custom_protocol_task_ids: Default::default(),
       });
 

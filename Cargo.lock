@@ -1845,11 +1845,12 @@ dependencies = [
 
 [[package]]
 name = "objc2-core-foundation"
-version = "0.3.0"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "daeaf60f25471d26948a1c2f840e3f7d86f4109e3af4e8e4b5cd70c39690d925"
+checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
 dependencies = [
  "bitflags 2.8.0",
+ "dispatch2",
  "objc2 0.6.4",
 ]
 
