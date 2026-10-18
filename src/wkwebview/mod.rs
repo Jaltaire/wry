@@ -50,7 +50,7 @@ use objc2_foundation::{
   NSObjectNSKeyValueCoding, NSObjectProtocol, NSString, NSUTF8StringEncoding, NSURL, NSUUID,
 };
 #[cfg(target_os = "ios")]
-use objc2_ui_kit::{UIScrollView, UIViewAutoresizing};
+use objc2_ui_kit::{NSLayoutConstraint, UIScrollView};
 
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSWindow;
@@ -446,7 +446,7 @@ impl InnerWebView {
       };
       #[cfg(target_os = "ios")]
       let webview = {
-        let frame = ns_view.frame();
+        let frame = ns_view.bounds();
         let webview: Retained<WryWebView> =
           objc2::msg_send![super(webview), initWithFrame: frame, configuration: &**config];
         if let Some((red, green, blue, alpha)) = attributes.background_color {
@@ -518,9 +518,7 @@ impl InnerWebView {
       }
       #[cfg(target_os = "ios")]
       {
-        webview.setAutoresizingMask(
-          UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
-        );
+        webview.setTranslatesAutoresizingMaskIntoConstraints(false);
 
         // disable scroll bounce by default
         // https://developer.apple.com/documentation/webkit/wkwebview/1614784-scrollview?language=objc
@@ -703,6 +701,10 @@ r#"Object.defineProperty(window, 'ipc', {
       #[cfg(target_os = "ios")]
       {
         ns_view.addSubview(&webview);
+        NSLayoutConstraint::activateConstraints(
+          &NSArray::from_retained_slice(&filling_constraints(&webview, ns_view)),
+          mtm,
+        );
       }
 
       Ok(w)
@@ -1468,5 +1470,28 @@ unsafe fn wait_for_blocking_operation<T>(rx: std::sync::mpsc::Receiver<T>) -> Re
     let mode = ns_string!("NSDefaultRunLoopMode");
 
     rl.acceptInputForMode_beforeDate(mode, &limit_date);
+  }
+}
+
+#[cfg(target_os = "ios")]
+unsafe fn filling_constraints(
+  webview: &NSView,
+  parent: &NSView,
+) -> [Retained<NSLayoutConstraint>; 4] {
+  unsafe {
+    [
+      webview
+        .leadingAnchor()
+        .constraintEqualToAnchor(&parent.leadingAnchor()),
+      webview
+        .trailingAnchor()
+        .constraintEqualToAnchor(&parent.trailingAnchor()),
+      webview
+        .topAnchor()
+        .constraintEqualToAnchor(&parent.topAnchor()),
+      webview
+        .bottomAnchor()
+        .constraintEqualToAnchor(&parent.bottomAnchor()),
+    ]
   }
 }
