@@ -352,6 +352,8 @@ mod custom_protocol_workaround;
 mod error;
 #[cfg(any(target_os = "android", test))]
 mod inject_initialization_scripts;
+#[cfg(any(target_os = "android", test))]
+mod page_lost;
 mod proxy;
 #[cfg(any(target_os = "macos", target_os = "android", target_os = "ios"))]
 mod util;
@@ -370,6 +372,8 @@ pub mod prelude {
 pub use android::JniHandle;
 #[cfg(target_os = "android")]
 use android::*;
+#[cfg(target_os = "android")]
+pub use page_lost::PageLost;
 
 #[cfg(gtk)]
 pub(crate) mod webkitgtk;
@@ -1840,18 +1844,7 @@ pub(crate) struct PlatformSpecificWebViewAttributes {
   with_asset_loader: bool,
   asset_loader_domain: Option<String>,
   https_scheme: bool,
-  on_render_process_gone: Option<Box<dyn Fn(RenderProcessGone)>>,
-}
-
-/// How a web view's renderer process went, as Android reports it to
-/// [`WebViewBuilderExtAndroid::with_on_render_process_gone_handler`].
-#[cfg(target_os = "android")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RenderProcessGone {
-  /// The renderer process crashed.
-  Crashed,
-  /// The system ended the renderer process, most often to reclaim its memory.
-  Killed,
+  on_page_lost: Option<page_lost::PageLostHandler>,
 }
 
 #[cfg(target_os = "android")]
@@ -1883,18 +1876,19 @@ pub trait WebViewBuilderExtAndroid {
   /// The default value is `false`.
   fn with_https_scheme(self, enabled: bool) -> Self;
 
-  /// Set a handler closure to respond to the web view's renderer process going, by a crash or because the system
-  /// ended it. Without it, Android ends the whole application with the renderer.
+  /// Set a handler closure to respond to the page the web view held being lost: when its renderer process goes, by
+  /// a crash or because the system ended it, and when the activity it was in is destroyed and created again in the
+  /// same process, as Android does to show a configuration change the activity does not handle itself.
   ///
-  /// The web view whose renderer went is destroyed, as Android requires, and replaced by a blank one made with the
-  /// same attributes and the same id, so every handler registered for it serves the replacement. Nothing is loaded
-  /// into the replacement: the handler is where the application asks for the page it wants again.
+  /// Either way, the lost web view is replaced by one made with the same attributes and the same id, in the
+  /// activity it was in, so every handler registered for it serves the replacement. A web view whose renderer went
+  /// is destroyed first, as Android requires. With this handler set, nothing is loaded into the replacement: the
+  /// handler is told only once the replacement has been asked for, and it is where the application asks for the
+  /// page it wants again. Without it, the replacement loads the address or the HTML the web view was made with.
   ///
   /// See https://developer.android.com/reference/android/webkit/WebViewClient#onRenderProcessGone(android.webkit.WebView,%20android.webkit.RenderProcessGoneDetail)
-  fn with_on_render_process_gone_handler(
-    self,
-    handler: impl Fn(RenderProcessGone) + 'static,
-  ) -> Self;
+  /// and https://developer.android.com/guide/topics/resources/runtime-changes
+  fn with_on_page_lost_handler(self, handler: impl Fn(PageLost) + 'static) -> Self;
 }
 
 #[cfg(target_os = "android")]
@@ -1933,11 +1927,8 @@ impl WebViewBuilderExtAndroid for WebViewBuilder<'_> {
     self
   }
 
-  fn with_on_render_process_gone_handler(
-    mut self,
-    handler: impl Fn(RenderProcessGone) + 'static,
-  ) -> Self {
-    self.platform_specific.on_render_process_gone = Some(Box::new(handler));
+  fn with_on_page_lost_handler(mut self, handler: impl Fn(PageLost) + 'static) -> Self {
+    self.platform_specific.on_page_lost = Some(std::sync::Arc::new(handler));
     self
   }
 }

@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-use super::{PageLoadEvent, RenderProcessGone, WebViewAttributes, RGBA};
+use super::{PageLoadEvent, WebViewAttributes, RGBA};
 use crate::{
-  custom_protocol_workaround, inject_initialization_scripts::inject_scripts_into_html, Error,
-  RequestAsyncResponder, Result,
+  custom_protocol_workaround,
+  inject_initialization_scripts::inject_scripts_into_html,
+  page_lost::{make_again, PageLost, PageLostHandler},
+  Error, RequestAsyncResponder, Result,
 };
 use crossbeam_channel::*;
 
@@ -74,7 +76,7 @@ define_static_handlers! {
   TITLE_CHANGE_HANDLER = UnsafeTitleHandler { handler: Box<dyn Fn(String)> };
   URL_LOADING_OVERRIDE = UnsafeUrlLoadingOverride { handler: Box<dyn Fn(String) -> bool> };
   ON_LOAD_HANDLER = UnsafeOnPageLoadHandler { handler: Box<dyn Fn(PageLoadEvent, String)> };
-  RENDER_PROCESS_GONE_HANDLER = UnsafeRenderProcessGoneHandler { handler: Box<dyn Fn(RenderProcessGone)> };
+  PAGE_LOST_HANDLER = UnsafePageLostHandler { handler: PageLostHandler };
 }
 define_static_handlers! {
   WebviewId, WITH_ASSET_LOADER = bool;
@@ -96,34 +98,35 @@ pub fn destroy_webview(activity_id: ActivityId, webview_id: &WebviewId) {
   TITLE_CHANGE_HANDLER.lock().unwrap().remove(webview_id);
   URL_LOADING_OVERRIDE.lock().unwrap().remove(webview_id);
   ON_LOAD_HANDLER.lock().unwrap().remove(webview_id);
-  RENDER_PROCESS_GONE_HANDLER
-    .lock()
-    .unwrap()
-    .remove(webview_id);
+  PAGE_LOST_HANDLER.lock().unwrap().remove(webview_id);
   WITH_ASSET_LOADER.lock().unwrap().remove(webview_id);
   ASSET_LOADER_DOMAIN.lock().unwrap().remove(webview_id);
 }
 
-pub(crate) fn render_process_gone(webview_id: &str, gone: RenderProcessGone) {
+fn lose_page(activity_id: ActivityId, made_with: CreateWebViewAttributes, lost: PageLost) {
+  let handler = PAGE_LOST_HANDLER
+    .lock()
+    .unwrap()
+    .get(&made_with.id)
+    .map(|handler| handler.handler.clone());
+  make_again(
+    made_with,
+    handler,
+    lost,
+    || forget_webview(activity_id),
+    |made_with| MainPipe::send(activity_id, WebViewMessage::CreateWebView(made_with)),
+  );
+}
+
+pub(crate) fn render_process_gone(webview_id: &str, lost: PageLost) {
   let gone_view = WEBVIEW_ATTRIBUTES
     .lock()
     .unwrap()
     .iter()
     .find(|(_, attributes)| attributes.id == webview_id)
     .map(|(activity_id, attributes)| (*activity_id, attributes.clone()));
-  if let Some((activity_id, attributes)) = gone_view {
-    forget_webview(activity_id);
-    MainPipe::send(
-      activity_id,
-      WebViewMessage::CreateWebView(CreateWebViewAttributes {
-        url: None,
-        html: None,
-        ..attributes
-      }),
-    );
-  }
-  if let Some(handler) = RENDER_PROCESS_GONE_HANDLER.lock().unwrap().get(webview_id) {
-    (handler.handler)(gone);
+  if let Some((activity_id, made_with)) = gone_view {
+    lose_page(activity_id, made_with, lost);
   }
 }
 
@@ -179,11 +182,13 @@ pub unsafe fn android_setup(
 
   register_activity_proxy(vm, activity_id, activity, window_manager, webchrome_client);
 
-  if let Some(webview_attributes) = WEBVIEW_ATTRIBUTES.lock().unwrap().get(&activity_id) {
-    MainPipe::send(
-      activity_id,
-      WebViewMessage::CreateWebView(webview_attributes.clone()),
-    );
+  let held_before = WEBVIEW_ATTRIBUTES
+    .lock()
+    .unwrap()
+    .get(&activity_id)
+    .cloned();
+  if let Some(made_with) = held_before {
+    lose_page(activity_id, made_with, PageLost::ActivityRecreated);
   }
 }
 
@@ -237,7 +242,7 @@ impl InnerWebView {
       with_asset_loader,
       asset_loader_domain,
       https_scheme,
-      on_render_process_gone,
+      on_page_lost,
     } = pl_attrs;
 
     let http_or_https = if https_scheme { "https" } else { "http" };
@@ -344,11 +349,11 @@ impl InnerWebView {
         .insert(id.clone(), UnsafeOnPageLoadHandler::new(h));
     }
 
-    if let Some(h) = on_render_process_gone {
-      RENDER_PROCESS_GONE_HANDLER
+    if let Some(h) = on_page_lost {
+      PAGE_LOST_HANDLER
         .lock()
         .unwrap()
-        .insert(id.clone(), UnsafeRenderProcessGoneHandler::new(h));
+        .insert(id.clone(), UnsafePageLostHandler::new(h));
     }
 
     let attributes = CreateWebViewAttributes {
