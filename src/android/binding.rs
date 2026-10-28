@@ -22,7 +22,7 @@ use super::{
   main_pipe::{MAIN_PIPE, MainPipe},
 };
 
-use crate::{PageLoadEvent, PageLost, PermissionKind, PermissionResponse};
+use crate::{PageLoadEvent, PermissionKind, PermissionResponse};
 
 #[macro_export]
 macro_rules! android_binding {
@@ -47,7 +47,7 @@ macro_rules! android_binding {
       $package,
       Rust,
       onRenderProcessGone,
-      [JString, jboolean]
+      [JObject, JString, jboolean]
     );
 
     android_fn!(
@@ -329,15 +329,19 @@ pub unsafe fn onWebviewDestroy(mut env: JNIEnv, _: JClass, activity: JObject, we
 pub unsafe fn onRenderProcessGone(
   mut env: JNIEnv,
   _: JClass,
+  webview: JObject,
   webview_id: JString,
   did_crash: jboolean,
 ) {
-  match env.get_string(&webview_id) {
+  match env
+    .get_string(&webview_id)
+    .map(|webview_id| webview_id.to_string_lossy().to_string())
+  {
     Ok(webview_id) => {
-      super::render_process_gone(
-        &webview_id.to_string_lossy(),
-        PageLost::of_render_process(did_crash != 0),
-      );
+      if let Err(_e) = super::render_process_gone(&mut env, &webview, &webview_id, did_crash != 0) {
+        #[cfg(feature = "tracing")]
+        tracing::warn!("Failed to replace the web view whose renderer process went: {_e}");
+      }
     }
     Err(_e) => {
       #[cfg(feature = "tracing")]

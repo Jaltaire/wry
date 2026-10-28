@@ -30,6 +30,7 @@
   void evalScript(...);
   java.lang.String getCookies(java.lang.String);
   void clearAllBrowsingData();
+  void removeAndDestroy();
 }
 
 -keep class {{package-unescaped}}.RustWebChromeClient,{{package-unescaped}}.RustWebViewClient {
