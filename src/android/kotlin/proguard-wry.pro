@@ -28,6 +28,7 @@
   void loadUrlMainThread(...);
   void loadHTMLMainThread(...);
   void evalScript(...);
+  void removeAndDestroy();
 }
 
 -keep class {{package-unescaped}}.RustWebChromeClient,{{package-unescaped}}.RustWebViewClient {

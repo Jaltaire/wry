@@ -6,7 +6,7 @@ use super::{PageLoadEvent, WebViewAttributes, RGBA};
 use crate::{
   custom_protocol_workaround,
   inject_initialization_scripts::inject_scripts_into_html,
-  page_lost::{make_again, PageLost, PageLostHandler},
+  page_lost::{self, make_again, PageLostHandler, Report},
   Error, RequestAsyncResponder, Result,
 };
 use crossbeam_channel::*;
@@ -30,8 +30,8 @@ use std::{
 pub(crate) mod binding;
 mod main_pipe;
 use main_pipe::{
-  activity_id_for_window_manager, first_activity_id, forget_webview, register_activity_proxy,
-  ActivityId, CreateWebViewAttributes, MainPipe, WebViewMessage,
+  activity_id_for_window_manager, activity_proxy, first_activity_id, forget_webview,
+  register_activity_proxy, ActivityId, CreateWebViewAttributes, MainPipe, WebViewMessage,
 };
 
 use crate::util::Counter;
@@ -103,30 +103,85 @@ pub fn destroy_webview(activity_id: ActivityId, webview_id: &WebviewId) {
   ASSET_LOADER_DOMAIN.lock().unwrap().remove(webview_id);
 }
 
-fn lose_page(activity_id: ActivityId, made_with: CreateWebViewAttributes, lost: PageLost) {
+struct ActivityLosingPage<'a, 'local> {
+  env: &'a mut JNIEnv<'local>,
+  id: ActivityId,
+}
+
+impl page_lost::Activity for ActivityLosingPage<'_, '_> {
+  type WebView = GlobalRef;
+  type Attributes = CreateWebViewAttributes;
+  type Error = jni::errors::Error;
+
+  fn webview(&self) -> Option<GlobalRef> {
+    activity_proxy(self.id).and_then(|proxy| proxy.webview)
+  }
+
+  fn is_same(&self, one: &GlobalRef, other: &GlobalRef) -> JniResult<bool> {
+    self.env.is_same_object(one, other)
+  }
+
+  fn forget_webview(&mut self) {
+    forget_webview(self.id);
+  }
+
+  fn destroy(&mut self, webview: GlobalRef) -> JniResult<()> {
+    self
+      .env
+      .call_method(&webview, "removeAndDestroy", "()V", &[])?;
+    Ok(())
+  }
+
+  fn create(&mut self, made_with: CreateWebViewAttributes) {
+    MainPipe::send(self.id, WebViewMessage::CreateWebView(made_with));
+  }
+}
+
+fn lose_page(
+  env: &mut JNIEnv,
+  activity_id: ActivityId,
+  made_with: CreateWebViewAttributes,
+  report: Report<GlobalRef>,
+) -> JniResult<()> {
   let handler = PAGE_LOST_HANDLER
     .lock()
     .unwrap()
     .get(&made_with.id)
     .map(|handler| handler.handler.clone());
   make_again(
+    &mut ActivityLosingPage {
+      env,
+      id: activity_id,
+    },
     made_with,
     handler,
-    lost,
-    || forget_webview(activity_id),
-    |made_with| MainPipe::send(activity_id, WebViewMessage::CreateWebView(made_with)),
-  );
+    report,
+  )
 }
 
-pub(crate) fn render_process_gone(webview_id: &str, lost: PageLost) {
+pub(crate) fn render_process_gone(
+  env: &mut JNIEnv,
+  webview: &JObject,
+  webview_id: &str,
+  did_crash: bool,
+) -> JniResult<()> {
   let gone_view = WEBVIEW_ATTRIBUTES
     .lock()
     .unwrap()
     .iter()
     .find(|(_, attributes)| attributes.id == webview_id)
     .map(|(activity_id, attributes)| (*activity_id, attributes.clone()));
-  if let Some((activity_id, made_with)) = gone_view {
-    lose_page(activity_id, made_with, lost);
+  match gone_view {
+    Some((activity_id, made_with)) => {
+      let webview = env.new_global_ref(webview)?;
+      lose_page(
+        env,
+        activity_id,
+        made_with,
+        Report::RenderProcessGone { webview, did_crash },
+      )
+    }
+    None => Ok(()),
   }
 }
 
@@ -188,7 +243,10 @@ pub unsafe fn android_setup(
     .get(&activity_id)
     .cloned();
   if let Some(made_with) = held_before {
-    lose_page(activity_id, made_with, PageLost::ActivityRecreated);
+    if let Err(_e) = lose_page(&mut env, activity_id, made_with, Report::ActivityRecreated) {
+      #[cfg(feature = "tracing")]
+      tracing::warn!("Failed to replace the web view of the activity created again: {_e}");
+    }
   }
 }
 

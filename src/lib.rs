@@ -1880,11 +1880,14 @@ pub trait WebViewBuilderExtAndroid {
   /// a crash or because the system ended it, and when the activity it was in is destroyed and created again in the
   /// same process, as Android does to show a configuration change the activity does not handle itself.
   ///
-  /// Either way, the lost web view is replaced by one made with the same attributes and the same id, in the
-  /// activity it was in, so every handler registered for it serves the replacement. A web view whose renderer went
-  /// is destroyed first, as Android requires. With this handler set, nothing is loaded into the replacement: the
-  /// handler is told only once the replacement has been asked for, and it is where the application asks for the
-  /// page it wants again. Without it, the replacement loads the address or the HTML the web view was made with.
+  /// Either way, the lost web view is removed from its activity and destroyed, and is replaced by one made with the
+  /// same attributes and the same id, in the activity created again where there is one, so every handler registered
+  /// for it serves the replacement. A page is lost only from the web view its activity holds, and so only once: a
+  /// report from a web view that has already been replaced, such as one that shared the renderer process that went,
+  /// is ignored, and an activity created again before its web view is made takes that web view as it is, with
+  /// nothing lost. With this handler set, nothing is loaded into the replacement: the handler is told only once the
+  /// replacement has been asked for, and it is where the application asks for the page it wants again. Without it,
+  /// the replacement loads the address or the HTML the web view was made with.
   ///
   /// See https://developer.android.com/reference/android/webkit/WebViewClient#onRenderProcessGone(android.webkit.WebView,%20android.webkit.RenderProcessGoneDetail)
   /// and https://developer.android.com/guide/topics/resources/runtime-changes

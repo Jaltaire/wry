@@ -7,6 +7,7 @@
 package {{package}}
 
 import android.annotation.SuppressLint
+import android.view.ViewGroup
 import android.webkit.*
 import android.content.Context
 import androidx.webkit.WebViewCompat
@@ -90,6 +91,11 @@ class RustWebView(context: Context, val initScripts: Array<String>, val id: Stri
     fun getCookies(url: String): String {
         val cookieManager = CookieManager.getInstance()
         return cookieManager.getCookie(url)
+    }
+
+    fun removeAndDestroy() {
+        (parent as? ViewGroup)?.removeView(this)
+        destroy()
     }
 
     {{class-extension}}
