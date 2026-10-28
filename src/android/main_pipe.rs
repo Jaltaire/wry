@@ -17,6 +17,7 @@ use std::{
 };
 
 use super::{EVAL_CALLBACKS, EVAL_ID_GENERATOR, EvalCallback, WebviewId, find_class};
+use crate::page_lost::MadeWith;
 
 pub type ActivityId = i32;
 
@@ -641,6 +642,16 @@ pub(crate) struct CreateWebViewAttributes {
   pub user_agent: Option<String>,
   pub initialization_scripts: Vec<InitializationScript>,
   pub javascript_disabled: bool,
+}
+
+impl MadeWith for CreateWebViewAttributes {
+  fn loading_nothing(self) -> Self {
+    Self {
+      url: None,
+      html: None,
+      ..self
+    }
+  }
 }
 
 // SAFETY: only use this when you are sure the span will be dropped on the same thread it was entered

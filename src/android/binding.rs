@@ -22,7 +22,7 @@ use super::{
   main_pipe::{MAIN_PIPE, MainPipe},
 };
 
-use crate::{PageLoadEvent, PermissionKind, PermissionResponse, RenderProcessGone};
+use crate::{PageLoadEvent, PageLost, PermissionKind, PermissionResponse};
 
 #[macro_export]
 macro_rules! android_binding {
@@ -334,12 +334,10 @@ pub unsafe fn onRenderProcessGone(
 ) {
   match env.get_string(&webview_id) {
     Ok(webview_id) => {
-      let gone = if did_crash == 0 {
-        RenderProcessGone::Killed
-      } else {
-        RenderProcessGone::Crashed
-      };
-      super::render_process_gone(&webview_id.to_string_lossy(), gone);
+      super::render_process_gone(
+        &webview_id.to_string_lossy(),
+        PageLost::of_render_process(did_crash != 0),
+      );
     }
     Err(_e) => {
       #[cfg(feature = "tracing")]
