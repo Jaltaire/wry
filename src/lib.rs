@@ -346,6 +346,8 @@
 mod custom_protocol_workaround;
 mod error;
 #[cfg(any(target_os = "android", test))]
+mod handler_panic;
+#[cfg(any(target_os = "android", test))]
 mod inject_initialization_scripts;
 #[cfg(any(target_os = "android", test))]
 mod page_lost;

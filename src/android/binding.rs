@@ -185,11 +185,13 @@ fn handle_request(
   let response = {
     #[cfg(feature = "tracing")]
     let _span = tracing::info_span!("wry::custom_protocol::call_handler").entered();
-    handler(
-      webview_id,
-      final_request,
-      is_document_start_script_enabled != 0,
-    )
+    crate::handler_panic::answer_unless_panicked(|| {
+      handler(
+        webview_id,
+        final_request,
+        is_document_start_script_enabled != 0,
+      )
+    })
   };
   let Some(response) = response else {
     return Ok(*JObject::null());
